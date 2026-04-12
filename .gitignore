@@ -1,0 +1,5 @@
+node_modules/
+.env
+seen.json
+subscribers.json
+.DS_Store

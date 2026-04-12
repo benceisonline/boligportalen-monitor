@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>BoligPortal Monitor</title>
+    <style>
+      :root{
+        --bg:#0b0c0f; --panel:#0f1115; --muted:#9aa0a6; --card:#111216;
+        --accent:#ffb86b; --text:#e6eef6; --radius:8px; --gap:12px;
+      }
+      *,*::before,*::after{box-sizing:border-box}
+      html,body{height:100%}
+      body{font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;padding:20px;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+
+      header{display:flex;align-items:center;justify-content:space-between;gap:16px}
+      h1{margin:0;font-size:18px}
+      #time{color:var(--muted);font-size:13px}
+
+      .container{max-width:980px;margin:18px auto}
+      .box{background:var(--panel);border-radius:var(--radius);padding:12px;margin-top:12px;box-shadow:0 6px 18px rgba(0,0,0,0.45)}
+
+      /* Ads list */
+      #ads{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+      .ad{display:flex;gap:12px;padding:10px;border-radius:6px;align-items:center;background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent)}
+      .ad + .ad{border-top:1px solid rgba(255,255,255,0.02)}
+      .thumb{width:96px;height:72px;flex:0 0 96px;border-radius:6px;object-fit:cover;background:linear-gradient(135deg,#111 0%,#222 100%)}
+      .content{flex:1;min-width:0}
+      .title{font-weight:700;font-size:15px;color:var(--text);margin-bottom:6px}
+      .title a{color:inherit;text-decoration:none}
+      .title a:hover{text-decoration:underline}
+      .meta{color:var(--muted);font-size:13px;display:flex;flex-wrap:wrap;gap:10px}
+      .rent{color:var(--accent);font-weight:700}
+      .new{box-shadow:0 0 0 2px rgba(255,184,107,0.06) inset}
+
+      /* Subscribe row */
+      .subscribe-row{display:flex;gap:8px;margin-top:8px}
+      .subscribe-row input{flex:1;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:inherit}
+      .subscribe-row button{padding:10px 14px;border-radius:6px;border:none;background:var(--accent);color:#111;font-weight:700}
+      .sub-msg{color:var(--muted);font-size:13px;margin-top:8px}
+      /* Utility classes to avoid inline styles */
+      .muted{color:var(--muted);font-size:13px;margin-top:6px}
+      .section-heading{margin:0;font-size:14px}
+      .lead{margin-top:8px;color:var(--muted)}
+
+      @media (max-width:640px){
+        .ad{flex-direction:row}
+        .thumb{width:84px;height:60px;flex:0 0 84px}
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <div>
+          <h1>BoligPortal Monitor</h1>
+          <div id="status" class="muted">Connecting…</div>
+        </div>
+        <div id="time" aria-live="polite">—</div>
+      </header>
+
+      <main>
+        <section class="box" aria-labelledby="latest-heading">
+          <h2 id="latest-heading" class="section-heading">Latest postings</h2>
+          <div id="ads" role="list" aria-live="polite"></div>
+        </section>
+
+        <section class="box" aria-labelledby="subscribe-heading">
+          <h2 id="subscribe-heading" class="section-heading">Subscribe for email alerts</h2>
+          <p class="lead">Enter your email to receive confirmations and new-post alerts.</p>
+          <div class="subscribe-row">
+            <input id="subEmail" type="email" placeholder="you@example.com" aria-label="Email address" />
+            <button id="subBtn">Subscribe</button>
+          </div>
+          <div id="subMsg" class="sub-msg" role="status" aria-live="polite"></div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      // Utility: format dates in Copenhagen timezone
+      function formatCopenhagen(dateStr){
+        try{
+          const d = dateStr ? new Date(dateStr) : new Date();
+          return new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'Europe/Copenhagen', year:'numeric', month:'2-digit', day:'2-digit',
+            hour:'2-digit', minute:'2-digit', hour12:false
+          }).format(d);
+        }catch(e){ return dateStr || ''; }
+      }
+
+      const statusEl = document.getElementById('status');
+      const timeEl = document.getElementById('time');
+      const adsEl = document.getElementById('ads');
+
+      // Safe DOM creation for an ad entry
+      function createAdNode(ad, highlight=false){
+        const item = document.createElement('div');
+        item.className = 'ad' + (highlight ? ' new' : '');
+        item.setAttribute('role','listitem');
+
+        const img = document.createElement('img');
+        img.className = 'thumb';
+        img.alt = ad.title || 'Listing image';
+        img.loading = 'lazy';
+        img.referrerPolicy = 'no-referrer';
+        img.src = ad.image || '';
+
+        const content = document.createElement('div');
+        content.className = 'content';
+
+        const title = document.createElement('div');
+        title.className = 'title';
+        const a = document.createElement('a');
+        a.href = ad.url || '#';
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = ad.title || 'Listing';
+        title.appendChild(a);
+
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        const loc = document.createElement('span');
+        loc.textContent = ad.location || ad.city || '';
+        loc.className = 'loc';
+        const info = document.createElement('span');
+        info.innerHTML = `${ad.size_m2 || ''}m2 — <span class="rent">${ad.rent || ''} kr</span>` + (ad.advertised_date ? ` — ${formatCopenhagen(ad.advertised_date)}` : '');
+        meta.appendChild(loc);
+        meta.appendChild(info);
+
+        content.appendChild(title);
+        content.appendChild(meta);
+
+        if(ad.image) item.appendChild(img);
+        item.appendChild(content);
+        return item;
+      }
+
+      // Render a batch of ads (replace contents)
+      function renderList(list, highlightIds=new Set()){
+        adsEl.innerHTML = '';
+        if(!Array.isArray(list) || list.length === 0){
+          adsEl.textContent = 'No results yet.';
+          return;
+        }
+        for(const ad of list){
+          const node = createAdNode(ad, highlightIds.has(String(ad.id)));
+          adsEl.appendChild(node);
+        }
+      }
+
+      // SSE connection with basic retry reporting
+      let es;
+      function connectEvents(){
+        es = new EventSource('/events');
+        statusEl.textContent = 'Connecting…';
+
+        es.onopen = () => { statusEl.textContent = 'Connected'; };
+        es.onerror = () => { statusEl.textContent = 'Disconnected — reconnecting'; };
+
+        es.addEventListener('initial', ev => {
+          try{
+            const payload = JSON.parse(ev.data);
+            statusEl.textContent = `Initial fetch — ${payload.timestamp}`;
+            timeEl.textContent = '';
+            renderList(payload.lastBatch || []);
+          }catch(e){ console.error('initial parse', e); }
+        });
+
+        es.addEventListener('update', ev => {
+          try{
+            const payload = JSON.parse(ev.data);
+            if(payload.type === 'no-new'){
+              statusEl.textContent = `No new postings — ${payload.timestamp}`;
+            } else if(payload.type === 'new-ads'){
+              statusEl.textContent = `New: ${payload.newAds.length} — ${payload.timestamp}`;
+              const highlight = new Set(payload.newAds.map(a=>String(a.id)));
+              renderList(payload.lastBatch || payload.newAds || [], highlight);
+            }
+          }catch(e){ console.error('update parse', e); }
+        });
+      }
+      connectEvents();
+
+      // Subscription UX
+      const subEmail = document.getElementById('subEmail');
+      const subBtn = document.getElementById('subBtn');
+      const subMsg = document.getElementById('subMsg');
+
+      async function doSubscribe(){
+        const email = (subEmail.value || '').trim();
+        if(!email){ subMsg.textContent = 'Enter a valid email.'; return; }
+        subBtn.disabled = true; subMsg.textContent = 'Subscribing…';
+        try{
+          const res = await fetch('/subscribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+          const j = await res.json().catch(()=>({}));
+          if(res.ok) subMsg.textContent = j.message || 'Subscribed — check your email.';
+          else subMsg.textContent = j.error || j.message || 'Subscription failed';
+        }catch(e){ subMsg.textContent = 'Network error while subscribing.'; }
+        subBtn.disabled = false;
+      }
+
+      subBtn.addEventListener('click', doSubscribe);
+      subEmail.addEventListener('keypress', (e)=>{ if(e.key === 'Enter') doSubscribe(); });
+    </script>
+  </body>
+</html>
