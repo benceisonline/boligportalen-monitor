@@ -83,6 +83,7 @@ const transporter = nodemailer.createTransport({
   secure: false,
   auth: { user: SMTP_USER, pass: SMTP_PASS }
 });
+let smtpAvailable = true;
 
 // Subscribers are stored as a simple array in `subscribers.json`.
 function loadSubscribers(){
@@ -100,6 +101,10 @@ function saveSubscribers(arr){
 
 async function sendEmail(to, subject, html){
   // Send a single email via configured SMTP transporter.
+  if (!smtpAvailable) {
+    console.error('SMTP unavailable: skipping send to', to);
+    return false;
+  }
   try{
     await transporter.sendMail({ from: SENDER, to, subject, html });
     return true;
@@ -123,6 +128,7 @@ function createNewAdsHtml(newAds){
 async function notifySubscribersAboutNewAds(newAds){
   // Send the same summary email to all subscribers (best-effort).
   try{
+    if (!smtpAvailable) { console.warn('SMTP unavailable: skipping email notifications'); return; }
     const subs = loadSubscribers();
     if(!subs.length) return;
     const html = createNewAdsHtml(newAds);
@@ -223,7 +229,7 @@ async function poll(seen, broadcastEvent) {
       for (const ad of lastBatch) {
         console.log(`   | ${ad.title} — ${ad.location || ad.city} — ${ad.size_m2}m2 — ${ad.rent} kr — ${ad.url}`);
       }
-      // persist baseline
+      // persist baseline (newest-first)
       saveSeen(lastBatch);
       for (const ad of lastBatch) seen.ids.add(String(ad.id));
       seen.data = lastBatch;
@@ -240,13 +246,14 @@ async function poll(seen, broadcastEvent) {
       for (const ad of newAds) {
         console.log(`NEW | ${ad.title} — ${ad.city} — ${ad.size_m2}m2 — ${ad.rent} kr — ${ad.url}`);
       }
-      // append new ads to seen list and persist
-      const updated = seen.data.concat(newAds);
+      // prepend new ads to seen list so newest items are first, then persist
+      const updated = newAds.concat(seen.data);
       saveSeen(updated);
       for (const ad of newAds) seen.ids.add(String(ad.id));
       seen.data = updated;
       if (typeof broadcastEvent === 'function') {
-        broadcastEvent('update', { type: 'new-ads', newAds, lastBatch, timestamp: now });
+        const payloadLastBatch = seen.data.slice(0, INITIAL_COUNT);
+        broadcastEvent('update', { type: 'new-ads', newAds, lastBatch: payloadLastBatch, timestamp: now });
       }
       // notify email subscribers asynchronously
       notifySubscribersAboutNewAds(newAds).catch(()=>{});
@@ -278,13 +285,24 @@ async function main() {
       if(!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'invalid email' });
       const subs = loadSubscribers();
       if(subs.includes(email)){
-        await sendEmail(email, 'Subscription confirmed', `<p>You are already subscribed to BoligPortal Monitor.</p>`);
-        return res.json({ ok: true, message: 'already subscribed' });
+        {
+          const sent = await sendEmail(email, 'Subscription confirmed', `<p>You are already subscribed to BoligPortal Monitor.</p>`);
+          if(!sent) return res.status(500).json({ error: 'email_failed' });
+          return res.json({ ok: true, message: 'already subscribed' });
+        }
       }
       subs.push(email);
       saveSubscribers(subs);
-      await sendEmail(email, 'Subscription confirmed', `<p>You are now subscribed to BoligPortal Monitor. You will receive emails when new postings appear.</p>`);
-      return res.json({ ok: true });
+      {
+        const sent = await sendEmail(email, 'Subscription confirmed', `<p>You are now subscribed to BoligPortal Monitor. You will receive emails when new postings appear.</p>`);
+        if(!sent){
+          // rollback subscription if confirmation email failed
+          const remaining = loadSubscribers().filter(s => s !== email);
+          saveSubscribers(remaining);
+          return res.status(500).json({ error: 'email_failed' });
+        }
+        return res.json({ ok: true });
+      }
     }catch(e){ console.error('subscribe error', e && e.message); return res.status(500).json({ error: 'server' }); }
   });
 
@@ -324,6 +342,20 @@ async function main() {
   const server = app.listen(port, () => {
     console.log('Frontend available at http://localhost:' + port);
   });
+  // verify SMTP availability early so we can surface useful errors
+  try {
+    if (SMTP_USER && SMTP_PASS) {
+      await transporter.verify();
+      console.log('SMTP transporter verified');
+      smtpAvailable = true;
+    } else {
+      smtpAvailable = false;
+      console.warn('SMTP credentials not provided; emails disabled');
+    }
+  } catch (e) {
+    smtpAvailable = false;
+    console.warn('SMTP verify failed; emails disabled', e && e.message);
+  }
   // --- end express server ---
 
   // Run immediately, then interval

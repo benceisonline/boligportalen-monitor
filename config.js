@@ -12,9 +12,9 @@ const DEFAULTS = {
   SUBSCRIBERS_FILE: path.join(__dirname, 'subscribers.json'),
   SMTP_HOST: 'smtp-relay.brevo.com',
   SMTP_PORT: 587,
-  SMTP_USER: '',
-  SMTP_PASS: '',
-  SENDER: 'BoligPortal Monitor <no-reply@example.com>',
+  SMTP_USER: 'a7dc68001@smtp-brevo.com',
+  SMTP_PASS: 'xsmtpsib-7115b9929bc2d185a7f1f5f63cfbb7232659bda1610416fa0779c8445519ceb9-gzgBIW0Cu3eC07Pr',
+  SENDER: 'Boligportal Monitor <benceg666g@gmail.com>',
   PORT: 3000,
 };
 
