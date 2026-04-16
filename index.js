@@ -218,7 +218,13 @@ async function poll(seen, broadcastEvent) {
       console.error('Could not find embedded results JSON in page');
       return;
     }
-    const lastBatch = results.slice(0, INITIAL_COUNT).map(formatAd);
+    let lastBatch = results.slice(0, INITIAL_COUNT).map(formatAd);
+    // Ensure the fetched batch is sorted newest-first by advertised_date
+    lastBatch.sort((a, b) => {
+      const ta = a && a.advertised_date ? Date.parse(a.advertised_date) : 0;
+      const tb = b && b.advertised_date ? Date.parse(b.advertised_date) : 0;
+      return tb - ta;
+    });
 
     const now = formatCopenhagen(new Date());
 
@@ -246,11 +252,22 @@ async function poll(seen, broadcastEvent) {
       for (const ad of newAds) {
         console.log(`NEW | ${ad.title} — ${ad.city} — ${ad.size_m2}m2 — ${ad.rent} kr — ${ad.url}`);
       }
-      // prepend new ads to seen list so newest items are first, then persist
-      const updated = newAds.concat(seen.data);
-      saveSeen(updated);
-      for (const ad of newAds) seen.ids.add(String(ad.id));
-      seen.data = updated;
+      // merge new ads with stored data, dedupe by id and sort newest-first
+      const merged = newAds.concat(seen.data || []);
+      const byId = new Map();
+      for (const ad of merged) {
+        const id = String(ad && ad.id ? ad.id : ad);
+        if (!byId.has(id)) byId.set(id, ad);
+      }
+      const deduped = Array.from(byId.values());
+      deduped.sort((a, b) => {
+        const ta = a && a.advertised_date ? Date.parse(a.advertised_date) : 0;
+        const tb = b && b.advertised_date ? Date.parse(b.advertised_date) : 0;
+        return tb - ta;
+      });
+      saveSeen(deduped);
+      seen.ids = new Set(deduped.map(d => String(d.id)));
+      seen.data = deduped;
       if (typeof broadcastEvent === 'function') {
         const payloadLastBatch = seen.data.slice(0, INITIAL_COUNT);
         broadcastEvent('update', { type: 'new-ads', newAds, lastBatch: payloadLastBatch, timestamp: now });
